@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: 'home-nas',
+      name: 'home-nas-engine',
       script: '/usr/local/bin/filebrowser',
       args: '-d /root/filebrowser.db',
       cwd: '/root',
@@ -10,7 +10,21 @@ module.exports = {
       watch: false,
       max_memory_restart: '150M',
       env: {
-        NODE_ENV: 'production'
+        PORT: '8080'
+      }
+    },
+    {
+      name: 'home-nas-gateway',
+      script: 'index.js',
+      cwd: '/root/android-home-nas/server',
+      interpreter: 'node',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '150M',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        ENGINE_PORT: 8080
       }
     },
     {

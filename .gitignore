@@ -20,8 +20,13 @@ backups/
 *.tar.gz
 *.zip
 
+# Dependencies
+node_modules/
+package-lock.json
+
 # OS & Editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+

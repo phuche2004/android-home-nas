@@ -1,24 +1,33 @@
 #!/bin/bash
 set -e
 
-# Script cap nhat cau hinh va reload PM2
+# Script deploy tu dong cap nhat frontend, backend va PM2
 
 REPO_DIR="/root/android-home-nas"
 
-echo "=== Cap nhat code tu repository ==="
-if [ -d "$REPO_DIR/.git" ]; then
-    cd "$REPO_DIR"
-    git fetch origin main
-    git reset --hard origin/main
+echo "=== 1. Cap nhat ma nguon tu Git ==="
+cd "$REPO_DIR"
+git fetch origin main
+git reset --hard origin/main
+
+echo "=== 2. Cai dat goi Server Gateway ==="
+cd "$REPO_DIR/server"
+npm install --production
+
+echo "=== 3. Kiem tra Frontend Build ==="
+# Neu co su thay doi o web hoac chua co dist thi build
+if [ ! -d "$REPO_DIR/web/dist" ]; then
+    echo "Dang build frontend web..."
+    cd "$REPO_DIR/web"
+    npm install
+    npm run build
 fi
 
-echo "=== Kiem tra va cap nhat file cau hinh ==="
-if [ -f "$REPO_DIR/ecosystem.config.js" ]; then
-    cp "$REPO_DIR/ecosystem.config.js" /root/ecosystem.config.js
-fi
+echo "=== 4. Dong bo ecosystem config ==="
+cp "$REPO_DIR/ecosystem.config.js" /root/ecosystem.config.js
 
-echo "=== Reload cac tien trinh PM2 ==="
-pm2 reload home-nas 2>/dev/null || pm2 restart home-nas 2>/dev/null || pm2 start /root/ecosystem.config.js
+echo "=== 5. Reload cac dich vu PM2 ==="
+pm2 startOrReload /root/ecosystem.config.js
 pm2 save
 
-echo "=== Deploy thanh cong ==="
+echo "=== DEPLOY HOAN TAT ==="
