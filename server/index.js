@@ -81,8 +81,11 @@ app.get('/api/system/telemetry', (req, res) => {
     });
 
     const totalMemMb = Math.round(totalMemKb / 1024) || Math.round(os.totalmem() / 1024 / 1024);
+    const freeMemMb = Math.round(freeMemKb / 1024);
+    const buffersCachedMb = Math.round((buffersKb + cachedKb) / 1024);
     const availMemMb = Math.round(availMemKb / 1024) || Math.round(os.freemem() / 1024 / 1024);
-    const usedMemMb = Math.max(0, totalMemMb - availMemMb);
+    // Standard Linux free -m formula: used = total - free - buffers - cached
+    const usedMemMb = Math.max(0, totalMemMb - freeMemMb - buffersCachedMb);
 
     // Storage info (UFS 2.2 storage)
     let storageTotalGb = 103;

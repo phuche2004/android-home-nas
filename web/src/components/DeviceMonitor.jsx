@@ -262,40 +262,57 @@ export function DeviceMonitor() {
               </div>
               <div>
                 <h3 className="text-base font-bold text-foreground">Bộ Nhớ RAM LPDDR4X</h3>
-                <p className="text-xs text-muted-foreground">Tổng khả dụng Linux: {memory?.totalMb} MB</p>
+                <p className="text-xs text-muted-foreground">Tổng bộ nhớ: {memory?.totalMb} MB</p>
               </div>
             </div>
-            <span className="text-sm font-bold text-foreground font-mono">{memory?.usagePercent}%</span>
+            <div className="text-right">
+              <span className="text-sm font-bold text-foreground font-mono">
+                {Math.round(((memory?.usedMb || 0) / (memory?.totalMb || 1)) * 100)}%
+              </span>
+              <span className="text-[10px] text-muted-foreground block">App chiếm dụng</span>
+            </div>
           </div>
 
           <div className="space-y-4">
             <div className="w-full bg-secondary h-3 rounded-full overflow-hidden flex">
               <div
                 className="bg-primary h-full transition-all duration-500"
-                style={{ width: `${(memory?.usedMb / memory?.totalMb) * 100}%` }}
-                title="Đang dùng"
+                style={{ width: `${Math.min(100, ((memory?.usedMb || 0) / (memory?.totalMb || 1)) * 100)}%` }}
+                title="Ứng dụng & HĐH"
               />
               <div
-                className="bg-amber-500/60 h-full transition-all duration-500"
-                style={{ width: `${(memory?.buffersCachedMb / memory?.totalMb) * 100}%` }}
-                title="Buffers / Cache"
+                className="bg-amber-400/70 h-full transition-all duration-500"
+                style={{ width: `${Math.min(100, ((memory?.buffersCachedMb || 0) / (memory?.totalMb || 1)) * 100)}%` }}
+                title="Cache / Buffers"
               />
             </div>
 
             <div className="grid grid-cols-3 gap-3 pt-2 text-center">
               <div className="p-2.5 rounded-xl bg-secondary/30 border border-border/40">
-                <span className="text-[11px] text-muted-foreground block">Đang dùng</span>
+                <span className="text-[11px] text-muted-foreground block flex items-center justify-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-primary inline-block" />
+                  App & HĐH
+                </span>
                 <span className="text-sm font-bold text-primary font-mono">{memory?.usedMb} MB</span>
               </div>
               <div className="p-2.5 rounded-xl bg-secondary/30 border border-border/40">
-                <span className="text-[11px] text-muted-foreground block">Cache / Buffers</span>
+                <span className="text-[11px] text-muted-foreground block flex items-center justify-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+                  Cache / Đệm
+                </span>
                 <span className="text-sm font-bold text-amber-400 font-mono">{memory?.buffersCachedMb} MB</span>
               </div>
               <div className="p-2.5 rounded-xl bg-secondary/30 border border-border/40">
-                <span className="text-[11px] text-muted-foreground block">Khả dụng</span>
+                <span className="text-[11px] text-muted-foreground block flex items-center justify-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
+                  Khả dụng
+                </span>
                 <span className="text-sm font-bold text-emerald-400 font-mono">{memory?.availableMb} MB</span>
               </div>
             </div>
+            <p className="text-[10px] text-muted-foreground/80 italic text-center">
+              * Bộ nhớ đệm (Cache/Buffers) được Linux tự động giải phóng tức thì khi ứng dụng cần thêm RAM.
+            </p>
           </div>
         </div>
 
