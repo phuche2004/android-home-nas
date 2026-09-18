@@ -1,0 +1,81 @@
+name: CI/CD Pipeline - Home NAS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Lint & Validate Configurations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate ecosystem.config.js
+        run: node --check ecosystem.config.js
+
+      - name: Validate JSON configuration files
+        run: |
+          for file in config/*.json; do
+            if [ -f "$file" ]; then
+              node -e "JSON.parse(require('fs').readFileSync('$file'))"
+              echo "Valid JSON: $file"
+            fi
+          done
+
+      - name: Validate Shell scripts
+        run: |
+          for script in scripts/*.sh; do
+            if [ -f "$script" ]; then
+              bash -n "$script"
+              echo "Valid Shell script: $script"
+            fi
+          done
+
+  deploy:
+    name: Deploy to Android Home Server
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if Tailscale Secret configured
+        id: check_secrets
+        run: |
+          if [ -n "${{ secrets.TAILSCALE_AUTHKEY }}" ] && [ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "can_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "can_deploy=false" >> $GITHUB_OUTPUT
+            echo "Deploy secret chua duoc thiet lap. Bo qua buoc SSH tu dong."
+          fi
+
+      - name: Connect to Tailscale Network
+        if: steps.check_secrets.outputs.can_deploy == 'true'
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Execute Deploy Script on Server
+        if: steps.check_secrets.outputs.can_deploy == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST || '100.91.43.5' }}
+          username: root
+          port: 2222
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            if [ -d "/root/android-home-nas" ]; then
+              cd /root/android-home-nas && bash scripts/deploy.sh
+            else
+              git clone https://github.com/${{ github.repository }}.git /root/android-home-nas
+              cd /root/android-home-nas && bash scripts/setup.sh
+            fi

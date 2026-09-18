@@ -1,0 +1,27 @@
+# Secrets and environment
+.env
+.env.*
+*.key
+*.pem
+*.token
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Logs & PIDs
+*.log
+logs/
+pids/
+
+# Backups
+backups/
+*.tar.gz
+*.zip
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
