@@ -127,11 +127,9 @@ android-home-nas/
 ### 5.2. Private Mesh Network (Tailscale)
 * **Internal IP:** `http://100.91.43.5:3000`
 
-### 5.3. Default Administrator Credentials
-* **Username:** `admin`
-* **Password:** `Admin@123456`
-
-*(Security Notice: Upon first login, navigate to `Settings` in the left sidebar to change your administrative password and configure multi-user access).*
+### 5.3. Authentication & User Management
+* Administrative and standard user accounts are configured via the system database (`/root/filebrowser.db`).
+* Multi-user management, password rotation, and permission scopes can be managed directly in the web UI under `Settings -> User Management`.
 
 ---
 
