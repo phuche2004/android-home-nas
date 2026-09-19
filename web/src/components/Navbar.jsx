@@ -1,5 +1,5 @@
 import React from 'react';
-import { HardDrive, Cpu, LogOut, User, Sparkles, Wifi } from 'lucide-react';
+import { HardDrive, Cpu, LogOut, User, Sparkles, Wifi, Settings, Shield } from 'lucide-react';
 
 export function Navbar({ activeTab, setActiveTab, user, onLogout }) {
   return (
@@ -28,7 +28,7 @@ export function Navbar({ activeTab, setActiveTab, user, onLogout }) {
             onClick={() => setActiveTab('files')}
             className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${
               activeTab === 'files'
-                ? 'bg-card text-foreground shadow-sm shadow-black/40 border border-border/60'
+                ? 'bg-card text-foreground shadow-sm shadow-black/40 border border-border/60 font-semibold'
                 : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
             }`}
           >
@@ -39,23 +39,43 @@ export function Navbar({ activeTab, setActiveTab, user, onLogout }) {
             onClick={() => setActiveTab('telemetry')}
             className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${
               activeTab === 'telemetry'
-                ? 'bg-card text-foreground shadow-sm shadow-black/40 border border-border/60'
+                ? 'bg-card text-foreground shadow-sm shadow-black/40 border border-border/60 font-semibold'
                 : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
             }`}
           >
             <Cpu className="w-3.5 h-3.5 text-primary" />
             <span>Phần cứng</span>
           </button>
+          <button
+            onClick={() => setActiveTab('settings')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-all duration-200 ${
+              activeTab === 'settings'
+                ? 'bg-card text-foreground shadow-sm shadow-black/40 border border-border/60 font-semibold text-amber-400'
+                : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+            }`}
+          >
+            <Settings className="w-3.5 h-3.5 text-amber-400" />
+            <span>Cài đặt</span>
+          </button>
         </nav>
 
         {/* User & Logout */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-secondary/40 border border-border/40 py-1 px-2.5 rounded-lg">
+          <button
+            onClick={() => setActiveTab('settings')}
+            className="flex items-center gap-2 bg-secondary/40 hover:bg-secondary/70 border border-border/40 py-1 px-2.5 rounded-lg transition-colors cursor-pointer"
+            title="Cài đặt tài khoản"
+          >
             <div className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">
               {user?.username ? user.username.slice(0, 2).toUpperCase() : 'U'}
             </div>
             <span className="text-xs font-medium text-foreground hidden md:inline">{user?.username}</span>
-          </div>
+            {user?.perm?.admin && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-primary/20 text-primary uppercase">
+                Admin
+              </span>
+            )}
+          </button>
 
           <button
             onClick={onLogout}

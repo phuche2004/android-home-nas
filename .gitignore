@@ -30,3 +30,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+
+# ESP32 IoT Temporary Storage
+*.bak
+history_store.json
+

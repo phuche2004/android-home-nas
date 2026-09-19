@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32-S3 IoT Telemetry Dashboard | bhair.site</title>
+  <meta name="description" content="Hệ thống giám sát chỉ số môi trường và chẩn đoán phần cứng thời gian thực từ cảm biến ESP32-S3 SHT31">
+
+  <!-- Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            obsidian: '#070a12',
+            panel: '#0e1526',
+            panelBorder: 'rgba(255, 255, 255, 0.08)',
+            cyanGlow: '#00f2fe',
+            emeraldGlow: '#10b981',
+            amberGlow: '#f59e0b',
+            crimsonGlow: '#f43f5e',
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+  <style>
+    body {
+      background-color: #060911;
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(14, 165, 233, 0.1) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(16, 185, 129, 0.08) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.08) 0px, transparent 50%);
+      background-attachment: fixed;
+    }
+    .glass-card {
+      background: rgba(14, 21, 38, 0.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .glass-card-hover {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .glass-card-hover:hover {
+      border-color: rgba(255, 255, 255, 0.2);
+      transform: translateY(-2px);
+    }
+    .card-active {
+      border-color: rgba(0, 242, 254, 0.6) !important;
+      box-shadow: 0 0 20px -5px rgba(0, 242, 254, 0.3);
+    }
+    .pulse-dot {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      animation: pulse-ring 1.8s infinite cubic-bezier(0.66, 0, 0, 1);
+    }
+    @keyframes pulse-ring {
+      to {
+        box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+      }
+    }
+    .pulse-dot-offline {
+      box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+      animation: pulse-ring-red 1.8s infinite cubic-bezier(0.66, 0, 0, 1);
+    }
+    @keyframes pulse-ring-red {
+      to {
+        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+      }
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #070a12;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100 flex flex-col antialiased selection:bg-cyan-500 selection:text-black">
+
+  <!-- Top Header Navigation -->
+  <header class="border-b border-white/10 bg-obsidian/90 backdrop-blur-xl sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Logo & Device Title -->
+      <div class="flex items-center space-x-3.5">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-emerald-400 p-0.5 shadow-lg shadow-cyan-500/20">
+          <div class="w-full h-full bg-obsidian rounded-[10px] flex items-center justify-center">
+            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="font-bold text-base sm:text-lg tracking-tight text-white flex items-center gap-2">
+              ESP32-S3 IoT Telemetry
+            </h1>
+            <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+              SHT31 1Hz
+            </span>
+          </div>
+          <div class="flex items-center space-x-2 text-xs text-slate-400 font-mono">
+            <span id="headerDeviceId" class="text-slate-400">Chờ thiết bị kết nối...</span>
+            <span>•</span>
+            <span id="headerNtpTime">--:--:--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Header: Live Status Indicator -->
+      <div class="flex items-center space-x-3">
+        <div id="statusBadge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-white/10 text-xs font-mono font-medium text-slate-400">
+          <span id="statusDot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+          <span id="statusText">CHỜ KẾT NỐI</span>
+        </div>
+        <div class="hidden sm:flex flex-col text-right font-mono text-[11px] text-slate-400">
+          <span>Gói: <strong id="headerSeq" class="text-slate-400">#--</strong></span>
+          <span class="text-[10px] text-slate-500" id="headerLastUpdate">Chưa có dữ liệu</span>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- Banner thông báo khi mất kết nối (Hiển thị kết quả quá khứ thực tế) -->
+  <div id="offlineNoticeBanner" class="hidden bg-amber-500/10 border-b border-amber-500/20 py-2 px-4 text-center text-xs font-mono text-amber-300">
+    <span class="font-semibold">THÔNG BÁO:</span> Thiết bị ESP32-S3 hiện đang ngắt kết nối. Dưới đây là dữ liệu thực tế ghi nhận lần cuối lúc <strong id="bannerLastSeenTime">--:--:--</strong>.
+  </div>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- PHẦN 1: CÁC CHỈ SỐ MÔI TRƯỜNG KÈM BIỂU ĐỒ MINI SPARKLINE -->
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xs font-bold font-mono uppercase tracking-wider text-slate-400">
+          1. Chỉ Số Khí Hậu & Môi Trường (Bấm vào thẻ để xem biểu đồ chi tiết)
+        </h2>
+        <span class="text-[11px] font-mono text-slate-500">SHT31 Sensor Precision</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        <!-- Card 1: Nhiệt độ -->
+        <div id="cardTemp" onclick="selectMetric('temperature')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg card-active">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              Nhiệt Độ
+            </span>
+            <span id="tempComfortBadge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/5">
+              Chờ dữ liệu
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="valTemperature" class="text-3xl font-bold font-mono text-white tracking-tight">--.-</span>
+            <span class="text-base font-mono text-slate-400">°C</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkTemp"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Min: <strong id="tempMin" class="text-slate-300">--</strong></span>
+            <span>Max: <strong id="tempMax" class="text-slate-300">--</strong></span>
+          </div>
+        </div>
+
+        <!-- Card 2: Độ ẩm -->
+        <div id="cardHumidity" onclick="selectMetric('humidity')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+              Độ Ẩm Không Khí
+            </span>
+            <span id="humStatusBadge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/5">
+              Chờ dữ liệu
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="valHumidity" class="text-3xl font-bold font-mono text-cyan-300 tracking-tight">--.-</span>
+            <span class="text-base font-mono text-cyan-500">%RH</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkHumidity"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Dải: <strong>0 - 100%</strong></span>
+            <span id="humStatusText" class="text-cyan-400">--</span>
+          </div>
+        </div>
+
+        <!-- Card 3: Điểm sương (Dew Point) -->
+        <div id="cardDewPoint" onclick="selectMetric('dew_point')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 00-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
+              Điểm Sương
+            </span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+              Magnus
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="valDewPoint" class="text-3xl font-bold font-mono text-indigo-300 tracking-tight">--.-</span>
+            <span class="text-base font-mono text-indigo-500">°C</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkDewPoint"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Ngưng tụ:</span>
+            <span id="dewCondensationStatus" class="text-slate-300">--</span>
+          </div>
+        </div>
+
+        <!-- Card 4: VPD -->
+        <div id="cardVpd" onclick="selectMetric('vpd')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-purple-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              Thiếu Hụt Áp Suất
+            </span>
+            <span id="vpdConditionBadge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/5">
+              VPD
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="valVpd" class="text-3xl font-bold font-mono text-purple-300 tracking-tight">--.-</span>
+            <span class="text-base font-mono text-purple-500">kPa</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkVpd"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Bốc thoát:</span>
+            <span id="vpdTranspiration" class="text-slate-300">--</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- PHẦN 2: CHẨN ĐOÁN PHẦN CỨNG KÈM BIỂU ĐỒ MINI SPARKLINE -->
+    <div>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xs font-bold font-mono uppercase tracking-wider text-slate-400">
+          2. Chẩn Đoán Phần Cứng ESP32-S3 (Bấm vào thẻ để xem biểu đồ chi tiết)
+        </h2>
+        <span class="text-[11px] font-mono text-slate-500">Xtensa Dual-Core Telemetry</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        <!-- Card 5: Nhiệt độ Chip ESP32 -->
+        <div id="cardChipTemp" onclick="selectMetric('chip_temp')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+              Nhiệt Độ Chip
+            </span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              ESP32-S3
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="diagChipTemp" class="text-3xl font-bold font-mono text-amber-300 tracking-tight">--.-</span>
+            <span class="text-base font-mono text-amber-500">°C</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkChipTemp"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Giới hạn: <strong>&lt; 75°C</strong></span>
+            <span id="chipTempStatus" class="text-amber-400">--</span>
+          </div>
+        </div>
+
+        <!-- Card 6: Tải CPU Tổng thể -->
+        <div id="cardCpuLoad" onclick="selectMetric('cpu_load')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-orange-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/></svg>
+              Tải CPU Tổng
+            </span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">
+              Core 0 & 1
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="diagCpuLoad" class="text-3xl font-bold font-mono text-orange-300 tracking-tight">--</span>
+            <span class="text-base font-mono text-orange-500">%</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkCpuLoad"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>C0: <strong id="diagCpu0">--%</strong></span>
+            <span>C1: <strong id="diagCpu1">--%</strong></span>
+          </div>
+        </div>
+
+        <!-- Card 7: Bộ nhớ RAM Heap trống -->
+        <div id="cardFreeHeap" onclick="selectMetric('free_heap')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2 1.5 3 3.5 3h9c2 0 3.5-1 3.5-3V7c0-2-1.5-3-3.5-3h-9C5.5 4 4 5 4 7z"/></svg>
+              RAM Heap Trống
+            </span>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              SRAM
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="diagFreeHeap" class="text-3xl font-bold font-mono text-emerald-300 tracking-tight">--</span>
+            <span class="text-base font-mono text-emerald-500">KB</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkFreeHeap"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Uptime:</span>
+            <span id="diagUptime" class="text-slate-300">--</span>
+          </div>
+        </div>
+
+        <!-- Card 8: Cường độ sóng Wi-Fi (RSSI) -->
+        <div id="cardWifiRssi" onclick="selectMetric('wifi_rssi')" class="glass-card glass-card-hover rounded-2xl p-4 cursor-pointer relative overflow-hidden shadow-lg">
+          <div class="flex items-center justify-between text-slate-400 mb-2">
+            <span class="text-xs font-semibold uppercase tracking-wider text-sky-400 flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"/></svg>
+              Sóng Wi-Fi RSSI
+            </span>
+            <span id="wifiQualityBadge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-white/5">
+              Chờ đo
+            </span>
+          </div>
+
+          <div class="flex items-baseline space-x-1.5 my-1">
+            <span id="diagWifiRssi" class="text-3xl font-bold font-mono text-sky-300 tracking-tight">--</span>
+            <span class="text-base font-mono text-sky-500">dBm</span>
+          </div>
+
+          <!-- Mini Sparkline Canvas -->
+          <div class="h-12 w-full mt-2">
+            <canvas id="sparkWifiRssi"></canvas>
+          </div>
+
+          <div class="mt-2 pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-slate-400">
+            <span>Rớt gói: <strong id="diagLossRate">--%</strong></span>
+            <span>Tổng: <strong id="diagTotalPackets">0</strong></span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- PHẦN 3: MASTER DETAILED CHART (BIỂU ĐỒ CHI TIẾT TƯƠNG TÁC) -->
+    <div class="glass-card rounded-2xl p-5 sm:p-6 shadow-2xl relative">
+      <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 mb-4 border-b border-white/5">
+        <div>
+          <div class="flex items-center gap-2">
+            <h2 id="masterChartTitle" class="text-base font-semibold text-white">
+              Biểu Đồ Chi Tiết: Nhiệt Độ Môi Trường
+            </h2>
+            <span id="masterChartBadge" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+              Realtime 1Hz
+            </span>
+          </div>
+          <p id="masterChartSubtitle" class="text-xs text-slate-400 mt-0.5">
+            Dữ liệu thực tế từ thiết bị ESP32-S3 • Không dữ liệu mẫu
+          </p>
+        </div>
+
+        <!-- Controls: Tab View & Time Range Selector -->
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+          
+          <!-- View Group Selector -->
+          <div class="flex items-center p-1 rounded-xl bg-slate-900/80 border border-white/10 text-xs font-mono">
+            <button id="btnViewClimate" onclick="setMasterView('climate')" class="px-2.5 py-1 rounded-lg transition-colors bg-white/10 text-white font-medium">Khí Hậu</button>
+            <button id="btnViewHardware" onclick="setMasterView('hardware')" class="px-2.5 py-1 rounded-lg transition-colors text-slate-400 hover:text-white">Phần Cứng</button>
+            <button id="btnViewSingle" onclick="setMasterView('single')" class="px-2.5 py-1 rounded-lg transition-colors text-slate-400 hover:text-white">Đơn Lẻ</button>
+          </div>
+
+          <!-- Time Range Selector -->
+          <div class="flex items-center p-1 rounded-xl bg-slate-900/80 border border-white/10 text-xs font-mono">
+            <button id="btnRange5m" onclick="setTimeRange('5m')" class="px-2.5 py-1 rounded-lg transition-colors bg-cyan-500 text-black font-semibold shadow-sm">5 Phút</button>
+            <button id="btnRange1h" onclick="setTimeRange('1h')" class="px-2.5 py-1 rounded-lg transition-colors text-slate-400 hover:text-white">1 Giờ</button>
+            <button id="btnRange24h" onclick="setTimeRange('24h')" class="px-2.5 py-1 rounded-lg transition-colors text-slate-400 hover:text-white">24 Giờ</button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Empty State Overlay khi chưa có dữ liệu -->
+      <div id="masterChartEmptyOverlay" class="absolute inset-0 top-20 flex flex-col items-center justify-center bg-obsidian/75 backdrop-blur-sm z-10 rounded-2xl pointer-events-none">
+        <svg class="w-9 h-9 text-slate-500 mb-2 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <span class="text-sm font-mono text-slate-300 font-medium">Chưa có gói tin nào từ ESP32-S3</span>
+        <span class="text-xs text-slate-500 mt-1">Biểu đồ sẽ tự động vẽ ngay khi nhận được dữ liệu thực tế đầu tiên</span>
+      </div>
+
+      <!-- Master Chart Canvas Container -->
+      <div class="relative w-full h-80 sm:h-96">
+        <canvas id="masterChartCanvas"></canvas>
+      </div>
+
+      <!-- Master Chart Footer Stats -->
+      <div id="masterChartStatsBar" class="mt-4 pt-3 border-t border-white/5 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono text-slate-400">
+        <div>Điểm dữ liệu: <strong id="statDataPoints" class="text-slate-200">0</strong></div>
+        <div>Giá trị Min: <strong id="statValMin" class="text-slate-200">--</strong></div>
+        <div>Giá trị Max: <strong id="statValMax" class="text-slate-200">--</strong></div>
+        <div>Trung bình: <strong id="statValAvg" class="text-slate-200">--</strong></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-white/5 py-5 text-center text-xs font-mono text-slate-500 mt-auto">
+    <p>ESP32-S3 IoT Telemetry Dashboard • bhair.site/esp • Toàn bộ chỉ số có biểu đồ quá khứ & thời gian thực</p>
+  </footer>
+
+  <!-- Script logic: Multi-Sparklines & Master Chart Engine (100% Real Data) -->
+  <script>
+    // State quản lý toàn bộ hệ thống
+    let hasReceivedAnyPacket = false;
+    let lastPacketTimestamp = 0;
+    let currentSelectedMetric = 'temperature'; // metric dang chon khi o che do 'single'
+    let currentMasterView = 'climate'; // 'climate' | 'hardware' | 'single'
+    let currentTimeRange = '5m'; // '5m' | '1h' | '24h'
+
+    // Dữ liệu lưu trữ trên Client
+    let realtimeBuffer = []; // 300 diem gan nhat
+    let longTermBuffer = []; // 1440 diem 24h
+
+    // Metadata cấu hình từng Metric
+    const METRIC_CONFIG = {
+      temperature: { label: 'Nhiệt Độ', unit: '°C', color: '#10b981', yAxis: 'yTemp', getVal: r => r.metrics?.temperature },
+      humidity: { label: 'Độ Ẩm', unit: '%RH', color: '#06b6d4', yAxis: 'yHum', getVal: r => r.metrics?.humidity },
+      dew_point: { label: 'Điểm Sương', unit: '°C', color: '#6366f1', yAxis: 'yTemp', getVal: r => r.metrics?.dew_point },
+      vpd: { label: 'Thiếu Hụt Áp Suất (VPD)', unit: 'kPa', color: '#a855f7', yAxis: 'yVpd', getVal: r => r.metrics?.vpd },
+      chip_temp: { label: 'Nhiệt Độ Chip', unit: '°C', color: '#f59e0b', yAxis: 'yTemp', getVal: r => r.diagnostics?.chip_temp },
+      cpu_load: { label: 'Tải CPU', unit: '%', color: '#f97316', yAxis: 'yPercent', getVal: r => r.diagnostics?.cpu_load },
+      free_heap: { label: 'RAM Heap Trống', unit: 'KB', color: '#34d399', yAxis: 'yHeap', getVal: r => Math.round((r.diagnostics?.free_heap || 0) / 1024) },
+      wifi_rssi: { label: 'Wi-Fi RSSI', unit: 'dBm', color: '#38bdf8', yAxis: 'yRssi', getVal: r => r.diagnostics?.wifi_rssi }
+    };
+
+    // Tạo Sparkline Chart Helper
+    function createSparkline(canvasId, color) {
+      const el = document.getElementById(canvasId);
+      if (!el) return null;
+      const ctx = el.getContext('2d');
+      const grad = ctx.createLinearGradient(0, 0, 0, 48);
+      grad.addColorStop(0, color + '55');
+      grad.addColorStop(1, color + '00');
+
+      return new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            data: [],
+            borderColor: color,
+            borderWidth: 1.5,
+            backgroundColor: grad,
+            fill: true,
+            tension: 0.35,
+            pointRadius: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          scales: {
+            x: { display: false },
+            y: { display: false }
+          }
+        }
+      });
+    }
+
+    // Khởi tạo 8 Sparklines
+    const sparks = {
+      temperature: createSparkline('sparkTemp', '#10b981'),
+      humidity: createSparkline('sparkHumidity', '#06b6d4'),
+      dew_point: createSparkline('sparkDewPoint', '#6366f1'),
+      vpd: createSparkline('sparkVpd', '#a855f7'),
+      chip_temp: createSparkline('sparkChipTemp', '#f59e0b'),
+      cpu_load: createSparkline('sparkCpuLoad', '#f97316'),
+      free_heap: createSparkline('sparkFreeHeap', '#34d399'),
+      wifi_rssi: createSparkline('sparkWifiRssi', '#38bdf8')
+    };
+
+    // Khởi tạo Master Chart
+    const masterCtx = document.getElementById('masterChartCanvas').getContext('2d');
+    const masterChart = new Chart(masterCtx, {
+      type: 'line',
+      data: { labels: [], datasets: [] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 250, easing: 'easeOutQuad' },
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: {
+            grid: { color: 'rgba(255, 255, 255, 0.04)' },
+            ticks: {
+              color: '#64748b',
+              font: { family: 'JetBrains Mono', size: 10 },
+              maxRotation: 0,
+              maxTicksLimit: 10
+            }
+          },
+          yLeft: {
+            type: 'linear',
+            position: 'left',
+            grid: { color: 'rgba(255, 255, 255, 0.04)' },
+            ticks: {
+              color: '#cbd5e1',
+              font: { family: 'JetBrains Mono', size: 11 }
+            }
+          },
+          yRight: {
+            type: 'linear',
+            position: 'right',
+            grid: { drawOnChartArea: false },
+            ticks: {
+              color: '#94a3b8',
+              font: { family: 'JetBrains Mono', size: 11 }
+            }
+          }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            labels: {
+              color: '#e2e8f0',
+              font: { family: 'JetBrains Mono', size: 11 },
+              boxWidth: 12,
+              usePointStyle: true
+            }
+          },
+          tooltip: {
+            backgroundColor: 'rgba(14, 21, 38, 0.95)',
+            titleColor: '#e2e8f0',
+            bodyColor: '#e2e8f0',
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+            borderWidth: 1,
+            padding: 10,
+            titleFont: { family: 'JetBrains Mono' },
+            bodyFont: { family: 'JetBrains Mono' }
+          }
+        }
+      }
+    });
+
+    // Cập nhật cấu hình Master Chart dựa trên view mode và timeframe
+    function rebuildMasterChartConfig() {
+      let activeDatasets = [];
+      const isClimate = currentMasterView === 'climate';
+      const isHardware = currentMasterView === 'hardware';
+      const isSingle = currentMasterView === 'single';
+
+      const titleEl = document.getElementById('masterChartTitle');
+      const badgeEl = document.getElementById('masterChartBadge');
+
+      badgeEl.textContent = currentTimeRange === '5m' ? 'Realtime 1Hz' : (currentTimeRange === '1h' ? '1 Giờ (Mỗi 1p)' : '24 Giờ');
+
+      if (isClimate) {
+        titleEl.textContent = 'Biểu Đồ Toàn Cảnh: Khí Hậu & Môi Trường';
+        activeDatasets = [
+          { key: 'temperature', label: 'Nhiệt độ (°C)', color: '#10b981', yAxisID: 'yLeft' },
+          { key: 'humidity', label: 'Độ ẩm (%RH)', color: '#06b6d4', yAxisID: 'yRight' },
+          { key: 'dew_point', label: 'Điểm sương (°C)', color: '#6366f1', yAxisID: 'yLeft' }
+        ];
+      } else if (isHardware) {
+        titleEl.textContent = 'Biểu Đồ Toàn Cảnh: Chẩn Đoán Phần Cứng ESP32-S3';
+        activeDatasets = [
+          { key: 'chip_temp', label: 'Nhiệt độ Chip (°C)', color: '#f59e0b', yAxisID: 'yLeft' },
+          { key: 'cpu_load', label: 'Tải CPU (%)', color: '#f97316', yAxisID: 'yRight' },
+          { key: 'wifi_rssi', label: 'Wi-Fi RSSI (dBm)', color: '#38bdf8', yAxisID: 'yLeft' }
+        ];
+      } else {
+        const conf = METRIC_CONFIG[currentSelectedMetric] || METRIC_CONFIG.temperature;
+        titleEl.textContent = `Biểu Đồ Chi Tiết: ${conf.label} (${conf.unit})`;
+        activeDatasets = [
+          { key: currentSelectedMetric, label: `${conf.label} (${conf.unit})`, color: conf.color, yAxisID: 'yLeft', fill: true }
+        ];
+      }
+
+      // Xây dựng lại dataset cho master chart
+      masterChart.data.datasets = activeDatasets.map(d => {
+        const grad = masterCtx.createLinearGradient(0, 0, 0, 300);
+        grad.addColorStop(0, d.color + '44');
+        grad.addColorStop(1, d.color + '00');
+
+        return {
+          label: d.label,
+          data: [],
+          borderColor: d.color,
+          backgroundColor: d.fill ? grad : 'transparent',
+          borderWidth: 2,
+          tension: 0.35,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          fill: Boolean(d.fill),
+          yAxisID: d.yAxisID,
+          _metricKey: d.key
+        };
+      });
+
+      renderMasterChartData();
+    }
+
+    // Nạp dữ liệu vào Master Chart theo time range
+    function renderMasterChartData() {
+      let sourcePoints = [];
+      if (currentTimeRange === '5m') {
+        sourcePoints = realtimeBuffer;
+      } else if (currentTimeRange === '1h') {
+        sourcePoints = longTermBuffer.slice(-60);
+      } else {
+        sourcePoints = longTermBuffer;
+      }
+
+      const overlay = document.getElementById('masterChartEmptyOverlay');
+      if (!sourcePoints || sourcePoints.length === 0) {
+        if (overlay) overlay.classList.remove('hidden');
+        masterChart.data.labels = [];
+        masterChart.data.datasets.forEach(ds => ds.data = []);
+        masterChart.update('none');
+        updateStatsBar([]);
+        return;
+      }
+
+      if (overlay) overlay.classList.add('hidden');
+
+      const labels = sourcePoints.map(p => {
+        const t = (p.timestamp || Math.floor(Date.now() / 1000)) * 1000;
+        return new Date(t).toLocaleTimeString('vi-VN', { hour12: false });
+      });
+
+      masterChart.data.labels = labels;
+
+      masterChart.data.datasets.forEach(ds => {
+        const key = ds._metricKey;
+        const getter = METRIC_CONFIG[key]?.getVal || (r => 0);
+        ds.data = sourcePoints.map(getter);
+      });
+
+      masterChart.update('none');
+
+      // Cập nhật thanh thống kê
+      const primaryData = masterChart.data.datasets[0]?.data || [];
+      updateStatsBar(primaryData);
+    }
+
+    // Helper cập nhật thanh stats footer
+    function updateStatsBar(values) {
+      const valid = values.filter(v => v !== undefined && v !== null && !isNaN(v));
+      document.getElementById('statDataPoints').textContent = valid.length;
+      if (valid.length === 0) {
+        document.getElementById('statValMin').textContent = '--';
+        document.getElementById('statValMax').textContent = '--';
+        document.getElementById('statValAvg').textContent = '--';
+        return;
+      }
+      const min = Math.min(...valid);
+      const max = Math.max(...valid);
+      const avg = (valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(2);
+      document.getElementById('statValMin').textContent = min;
+      document.getElementById('statValMax').textContent = max;
+      document.getElementById('statValAvg').textContent = avg;
+    }
+
+    // Chọn hiển thị đơn lẻ khi click vào card
+    function selectMetric(key) {
+      currentSelectedMetric = key;
+      setMasterView('single');
+
+      // Cập nhật viền card active
+      const allCards = ['cardTemp', 'cardHumidity', 'cardDewPoint', 'cardVpd', 'cardChipTemp', 'cardCpuLoad', 'cardFreeHeap', 'cardWifiRssi'];
+      allCards.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('card-active');
+      });
+
+      const mapCardId = {
+        temperature: 'cardTemp',
+        humidity: 'cardHumidity',
+        dew_point: 'cardDewPoint',
+        vpd: 'cardVpd',
+        chip_temp: 'cardChipTemp',
+        cpu_load: 'cardCpuLoad',
+        free_heap: 'cardFreeHeap',
+        wifi_rssi: 'cardWifiRssi'
+      };
+      const activeEl = document.getElementById(mapCardId[key]);
+      if (activeEl) activeEl.classList.add('card-active');
+    }
+
+    // Chuyển View Mode
+    function setMasterView(mode) {
+      currentMasterView = mode;
+      const bClimate = document.getElementById('btnViewClimate');
+      const bHw = document.getElementById('btnViewHardware');
+      const bSingle = document.getElementById('btnViewSingle');
+
+      [bClimate, bHw, bSingle].forEach(b => {
+        b.className = 'px-2.5 py-1 rounded-lg transition-colors text-slate-400 hover:text-white';
+      });
+
+      if (mode === 'climate') bClimate.className = 'px-2.5 py-1 rounded-lg transition-colors bg-white/10 text-white font-medium';
+      if (mode === 'hardware') bHw.className = 'px-2.5 py-1 rounded-lg transition-colors bg-white/10 text-white font-medium';
+      if (mode === 'single') bSingle.className = 'px-2.5 py-1 rounded-lg transition-colors bg-white/10 text-white font-medium';
+
+      rebuildMasterChartConfig();
+    }
+
+    // Chuyển Time Range
+    function setTimeRange(range) {
+      currentTimeRange = range;
+      const b5 = document.getElementById('btnRange5m');
+      const b1 = document.getElementById('btnRange1h');
+      const b24 = document.getElementById('btnRange24h');
+
+      [b5, b1, b24].forEach(b => {
+        b.className = 'px-2.5 py-1 rounded-lg transition-colors text-slate-400 hover:text-white';
+      });
+
+      if (range === '5m') b5.className = 'px-2.5 py-1 rounded-lg transition-colors bg-cyan-500 text-black font-semibold shadow-sm';
+      if (range === '1h') b1.className = 'px-2.5 py-1 rounded-lg transition-colors bg-cyan-500 text-black font-semibold shadow-sm';
+      if (range === '24h') b24.className = 'px-2.5 py-1 rounded-lg transition-colors bg-cyan-500 text-black font-semibold shadow-sm';
+
+      rebuildMasterChartConfig();
+    }
+
+    // Cập nhật Sparklines với điểm mới
+    function pushPointToSparks(record) {
+      Object.keys(sparks).forEach(key => {
+        const chart = sparks[key];
+        if (!chart) return;
+        const val = METRIC_CONFIG[key].getVal(record);
+        chart.data.labels.push('');
+        chart.data.datasets[0].data.push(val);
+        if (chart.data.labels.length > 30) {
+          chart.data.labels.shift();
+          chart.data.datasets[0].data.shift();
+        }
+        chart.update('none');
+      });
+    }
+
+    // Nạp toàn bộ sparklines từ mảng buffer ban đầu
+    function loadInitialSparks(points) {
+      if (!points || points.length === 0) return;
+      const recent = points.slice(-30);
+      Object.keys(sparks).forEach(key => {
+        const chart = sparks[key];
+        if (!chart) return;
+        chart.data.labels = recent.map(() => '');
+        chart.data.datasets[0].data = recent.map(METRIC_CONFIG[key].getVal);
+        chart.update('none');
+      });
+    }
+
+    // Hiển thị trạng thái kết nối
+    function setConnectionStatus(state, extraInfo = '') {
+      const badge = document.getElementById('statusBadge');
+      const dot = document.getElementById('statusDot');
+      const text = document.getElementById('statusText');
+      const banner = document.getElementById('offlineNoticeBanner');
+
+      if (state === 'online') {
+        badge.className = 'flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-xs font-mono font-medium text-emerald-400';
+        dot.className = 'w-2 h-2 rounded-full bg-emerald-400 pulse-dot';
+        text.textContent = 'LIVE (1Hz)';
+        banner.classList.add('hidden');
+      } else if (state === 'disconnected') {
+        badge.className = 'flex items-center space-x-2 px-3 py-1.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-xs font-mono font-medium text-rose-400';
+        dot.className = 'w-2 h-2 rounded-full bg-rose-500 pulse-dot-offline';
+        text.textContent = extraInfo ? `NGẮT KẾT NỐI (${extraInfo})` : 'ĐÃ NGẮT KẾT NỐI';
+        if (hasReceivedAnyPacket) {
+          banner.classList.remove('hidden');
+        }
+      } else {
+        badge.className = 'flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-white/10 text-xs font-mono font-medium text-slate-400';
+        dot.className = 'w-2 h-2 rounded-full bg-slate-500';
+        text.textContent = 'CHỜ KẾT NỐI';
+        banner.classList.add('hidden');
+      }
+    }
+
+    // Cập nhật số liệu trên thẻ
+    function updateTelemetryUI(item, stats) {
+      if (!item) return;
+
+      hasReceivedAnyPacket = true;
+      lastPacketTimestamp = Date.now();
+      setConnectionStatus('online');
+
+      const metrics = item.metrics || {};
+      const diag = item.diagnostics || {};
+      const status = item.status || {};
+
+      if (item.device_id) document.getElementById('headerDeviceId').textContent = item.device_id;
+      if (item.seq !== undefined) document.getElementById('headerSeq').textContent = `#${item.seq}`;
+      if (item.timestamp) {
+        const d = new Date(item.timestamp * 1000);
+        const timeStr = d.toLocaleTimeString('vi-VN');
+        document.getElementById('headerNtpTime').textContent = timeStr;
+        document.getElementById('bannerLastSeenTime').textContent = `${timeStr} ${d.toLocaleDateString('vi-VN')}`;
+        document.getElementById('headerLastUpdate').textContent = `Lúc ${timeStr}`;
+      }
+
+      // Nhiệt độ
+      const temp = Number(metrics.temperature);
+      if (!isNaN(temp)) {
+        document.getElementById('valTemperature').textContent = temp.toFixed(2);
+        if (minTemp === null || temp < minTemp) minTemp = temp;
+        if (maxTemp === null || temp > maxTemp) maxTemp = temp;
+        document.getElementById('tempMin').textContent = minTemp.toFixed(1) + '°C';
+        document.getElementById('tempMax').textContent = maxTemp.toFixed(1) + '°C';
+
+        const badge = document.getElementById('tempComfortBadge');
+        if (temp >= 20 && temp <= 27) {
+          badge.textContent = 'Lý tưởng';
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        } else if (temp > 27 && temp <= 32) {
+          badge.textContent = 'Ấm';
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20';
+        } else if (temp > 32) {
+          badge.textContent = 'Nóng';
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20';
+        } else {
+          badge.textContent = 'Lạnh';
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
+        }
+      }
+
+      // Độ ẩm
+      const hum = Number(metrics.humidity);
+      if (!isNaN(hum)) {
+        document.getElementById('valHumidity').textContent = hum.toFixed(1);
+        const badge = document.getElementById('humStatusBadge');
+        const stText = document.getElementById('humStatusText');
+        if (hum >= 45 && hum <= 65) {
+          badge.textContent = 'Dễ chịu';
+          stText.textContent = 'Tối ưu';
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
+        } else if (hum < 45) {
+          badge.textContent = 'Khô';
+          stText.textContent = 'Khô hanh';
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20';
+        } else {
+          badge.textContent = 'Ẩm';
+          stText.textContent = 'Ẩm ướt';
+          badge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20';
+        }
+      }
+
+      // Điểm sương
+      const dew = Number(metrics.dew_point);
+      if (!isNaN(dew)) {
+        document.getElementById('valDewPoint').textContent = dew.toFixed(1);
+        const cond = document.getElementById('dewCondensationStatus');
+        cond.textContent = dew >= 22 ? 'Nguy cơ đọng sương' : 'Khô ráo';
+        cond.className = dew >= 22 ? 'text-amber-400' : 'text-emerald-400';
+      }
+
+      // VPD
+      const vpd = Number(metrics.vpd);
+      if (!isNaN(vpd)) {
+        document.getElementById('valVpd').textContent = vpd.toFixed(2);
+        const trans = document.getElementById('vpdTranspiration');
+        trans.textContent = (vpd >= 0.8 && vpd <= 1.2) ? 'Lý tưởng thực vật' : (vpd < 0.8 ? 'Bốc hơi chậm' : 'Bốc hơi nhanh');
+      }
+
+      // Hardware
+      if (diag.chip_temp !== undefined) {
+        document.getElementById('diagChipTemp').textContent = Number(diag.chip_temp).toFixed(1);
+        document.getElementById('chipTempStatus').textContent = diag.chip_temp > 65 ? 'Nóng' : 'Bình thường';
+      }
+      if (diag.cpu_load !== undefined) {
+        document.getElementById('diagCpuLoad').textContent = Math.round(diag.cpu_load);
+      }
+      if (diag.cpu0 !== undefined) document.getElementById('diagCpu0').textContent = `${Math.round(diag.cpu0)}%`;
+      if (diag.cpu1 !== undefined) document.getElementById('diagCpu1').textContent = `${Math.round(diag.cpu1)}%`;
+      if (diag.free_heap !== undefined) {
+        document.getElementById('diagFreeHeap').textContent = Math.round(diag.free_heap / 1024);
+      }
+      if (diag.uptime_sec !== undefined) {
+        const secs = diag.uptime_sec;
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = secs % 60;
+        document.getElementById('diagUptime').textContent = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+      }
+      if (diag.wifi_rssi !== undefined) {
+        document.getElementById('diagWifiRssi').textContent = diag.wifi_rssi;
+        const wBadge = document.getElementById('wifiQualityBadge');
+        if (diag.wifi_rssi >= -65) {
+          wBadge.textContent = 'Rất mạnh';
+          wBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        } else if (diag.wifi_rssi >= -75) {
+          wBadge.textContent = 'Tốt';
+          wBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
+        } else {
+          wBadge.textContent = 'Yếu';
+          wBadge.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20';
+        }
+      }
+
+      if (stats) {
+        document.getElementById('diagTotalPackets').textContent = stats.totalReceived || 0;
+        document.getElementById('diagLossRate').textContent = `${stats.lossRate || '0.00'}%`;
+      }
+    }
+
+    // Kiểm tra timeout mỗi giây
+    setInterval(() => {
+      if (!hasReceivedAnyPacket) {
+        setConnectionStatus('none');
+        return;
+      }
+      const elapsed = Math.round((Date.now() - lastPacketTimestamp) / 1000);
+      if (elapsed >= 4) {
+        setConnectionStatus('disconnected', `${elapsed}s trước`);
+        document.getElementById('headerLastUpdate').textContent = `Ngắt ${elapsed}s trước`;
+      }
+    }, 1000);
+
+    // Khởi tạo ban đầu từ server
+    async function initDashboard() {
+      rebuildMasterChartConfig();
+
+      try {
+        const res = await fetch('/api/sensor/latest');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (Array.isArray(data.realtime_history)) {
+          realtimeBuffer = data.realtime_history;
+          loadInitialSparks(realtimeBuffer);
+        }
+        if (Array.isArray(data.long_term_history)) {
+          longTermBuffer = data.long_term_history;
+        }
+
+        if (data.latest) {
+          hasReceivedAnyPacket = true;
+          lastPacketTimestamp = data.latest.received_at || (Date.now() - (data.last_seen_sec_ago || 0) * 1000);
+          updateTelemetryUI(data.latest, {
+            totalReceived: data.stats?.total_received,
+            lossRate: data.stats?.packet_loss_rate
+          });
+
+          if (!data.is_online) {
+            setConnectionStatus('disconnected', data.last_seen_sec_ago ? `${data.last_seen_sec_ago}s trước` : '');
+          }
+        } else {
+          setConnectionStatus('none');
+        }
+
+        renderMasterChartData();
+      } catch (err) {
+        console.error('Lỗi nạp dữ liệu ban đầu:', err);
+      }
+    }
+
+    // Lắng nghe luồng SSE 1Hz
+    function startSSE() {
+      const es = new EventSource('/api/sensor/events');
+
+      es.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'initial') {
+            if (Array.isArray(payload.realtime_history)) {
+              realtimeBuffer = payload.realtime_history;
+              loadInitialSparks(realtimeBuffer);
+            }
+            if (Array.isArray(payload.long_term_history)) {
+              longTermBuffer = payload.long_term_history;
+            }
+            if (payload.data) {
+              updateTelemetryUI(payload.data, payload.stats);
+            }
+            renderMasterChartData();
+          } else if (payload.type === 'telemetry') {
+            const record = payload.data;
+            realtimeBuffer.push(record);
+            if (realtimeBuffer.length > 300) realtimeBuffer.shift();
+
+            pushPointToSparks(record);
+            updateTelemetryUI(record, payload.stats);
+
+            if (currentTimeRange === '5m') {
+              renderMasterChartData();
+            }
+          } else if (payload.type === 'batch_ingestion') {
+            const records = payload.records || [];
+            records.forEach(r => {
+              realtimeBuffer.push(r);
+              pushPointToSparks(r);
+            });
+            if (realtimeBuffer.length > 300) {
+              realtimeBuffer = realtimeBuffer.slice(-300);
+            }
+            if (payload.latest) {
+              updateTelemetryUI(payload.latest, payload.stats);
+            }
+            renderMasterChartData();
+          }
+        } catch (e) {
+          console.error('Lỗi parse SSE:', e);
+        }
+      };
+
+      es.onerror = () => {
+        es.close();
+        if (hasReceivedAnyPacket) {
+          setConnectionStatus('disconnected');
+        }
+        setTimeout(startSSE, 3000);
+      };
+    }
+
+    // Khởi chạy
+    initDashboard();
+    startSSE();
+  </script>
+</body>
+</html>

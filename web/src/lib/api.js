@@ -160,3 +160,100 @@ export async function fetchTelemetry() {
   }
   return await res.json();
 }
+
+export async function fetchUsers() {
+  const token = auth.getToken();
+  const res = await fetch('/api/users', {
+    headers: { 'X-Auth': token || '' }
+  });
+  if (!res.ok) throw new Error('Không thể tải danh sách người dùng');
+  return await res.json();
+}
+
+export async function createUser(userData, currentAdminPassword = '') {
+  const token = auth.getToken();
+  const res = await fetch('/api/users', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Auth': token || ''
+    },
+    body: JSON.stringify({
+      what: 'user',
+      which: [],
+      current_password: currentAdminPassword,
+      data: userData
+    })
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Tạo người dùng thất bại: ${err}`);
+  }
+  return res.status === 201;
+}
+
+export async function updateUser(id, whichFields, userData, currentPassword = '') {
+  const token = auth.getToken();
+  const res = await fetch(`/api/users/${id}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Auth': token || ''
+    },
+    body: JSON.stringify({
+      what: 'user',
+      which: whichFields,
+      current_password: currentPassword,
+      data: userData
+    })
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Cập nhật người dùng thất bại: ${err}`);
+  }
+  return true;
+}
+
+export async function deleteUser(id) {
+  const token = auth.getToken();
+  const res = await fetch(`/api/users/${id}`, {
+    method: 'DELETE',
+    headers: { 'X-Auth': token || '' }
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Xóa người dùng thất bại: ${err}`);
+  }
+  return true;
+}
+
+export async function fetchSettings() {
+  const token = auth.getToken();
+  const res = await fetch('/api/settings', {
+    headers: { 'X-Auth': token || '' }
+  });
+  if (!res.ok) throw new Error('Không thể tải cài đặt hệ thống');
+  return await res.json();
+}
+
+export async function updateSettings(whichFields, settingsData) {
+  const token = auth.getToken();
+  const res = await fetch('/api/settings', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Auth': token || ''
+    },
+    body: JSON.stringify({
+      what: 'settings',
+      which: whichFields,
+      data: settingsData
+    })
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Lưu cài đặt thất bại: ${err}`);
+  }
+  return true;
+}
+

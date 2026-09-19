@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Cpu, Battery, BatteryCharging, Zap, Thermometer, HardDrive,
-  Activity, ShieldCheck, RefreshCw, Layers, Clock, Radio, Server
+  Activity, ShieldCheck, RefreshCw, Layers, Clock, Radio, Server, CheckCircle2
 } from 'lucide-react';
 import { fetchTelemetry } from '../lib/api';
 import { formatBytes } from '../lib/utils';
@@ -304,14 +304,25 @@ export function DeviceMonitor() {
               </div>
               <div className="p-2.5 rounded-xl bg-secondary/30 border border-border/40">
                 <span className="text-[11px] text-muted-foreground block flex items-center justify-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />
-                  Khả dụng
+                  <span className="w-2 h-2 rounded-full bg-slate-400 inline-block" />
+                  Trống (Free)
                 </span>
-                <span className="text-sm font-bold text-emerald-400 font-mono">{memory?.availableMb} MB</span>
+                <span className="text-sm font-bold text-slate-300 font-mono">{memory?.freeMb} MB</span>
               </div>
             </div>
-            <p className="text-[10px] text-muted-foreground/80 italic text-center">
-              * Bộ nhớ đệm (Cache/Buffers) được Linux tự động giải phóng tức thì khi ứng dụng cần thêm RAM.
+
+            <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs">
+              <span className="text-emerald-400 font-medium flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                Khả dụng cho tác vụ mới:
+              </span>
+              <span className="font-mono font-bold text-emerald-400 text-sm">
+                {memory?.availableMb} MB ({Math.round(((memory?.availableMb || 0) / (memory?.totalMb || 1)) * 100)}%)
+              </span>
+            </div>
+
+            <p className="text-[10px] text-muted-foreground/80 italic text-center leading-tight">
+              * App ({memory?.usedMb} MB) + Cache ({memory?.buffersCachedMb} MB) + Trống ({memory?.freeMb} MB) = {memory?.totalMb} MB. Linux tự động giải phóng Cache khi mở thêm app.
             </p>
           </div>
         </div>

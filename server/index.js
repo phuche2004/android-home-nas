@@ -9,6 +9,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const ENGINE_PORT = process.env.ENGINE_PORT || 8080;
 const CLIENT_DIST = path.join(__dirname, '../web/dist');
+const ESP_DASHBOARD_DIR = path.join(__dirname, '../esp-dashboard');
+const STORE_FILE = path.join(ESP_DASHBOARD_DIR, 'history_store.json');
 
 app.use(cors());
 
@@ -27,10 +29,9 @@ function readSysFile(filePath, defaultValue = null) {
   return defaultValue;
 }
 
-// 1. Hardware Telemetry Endpoint
+// 1. Hardware Telemetry Endpoint (Android Server)
 app.get('/api/system/telemetry', (req, res) => {
   try {
-    // Battery & Power metrics from /sys/class/power_supply/battery
     const batPath = '/sys/class/power_supply/battery';
     const capacity = parseInt(readSysFile(`${batPath}/capacity`, '80'), 10);
     const status = readSysFile(`${batPath}/status`, 'Charging');
@@ -43,7 +44,6 @@ app.get('/api/system/telemetry', (req, res) => {
     const health = readSysFile(`${batPath}/health`, 'Good');
     const chargeType = readSysFile(`${batPath}/charge_type`, 'Taper');
 
-    // Qualcomm Snapdragon 680 CPU Core Frequencies (8 Cores)
     const cpuCores = [];
     for (let i = 0; i < 8; i++) {
       const freqKhz = parseInt(readSysFile(`/sys/devices/system/cpu/cpu${i}/cpufreq/scaling_cur_freq`, '0'), 10);
@@ -59,7 +59,6 @@ app.get('/api/system/telemetry', (req, res) => {
       });
     }
 
-    // Memory info from /proc/meminfo
     const meminfo = readSysFile('/proc/meminfo', '');
     let totalMemKb = 0;
     let availMemKb = 0;
@@ -84,10 +83,8 @@ app.get('/api/system/telemetry', (req, res) => {
     const freeMemMb = Math.round(freeMemKb / 1024);
     const buffersCachedMb = Math.round((buffersKb + cachedKb) / 1024);
     const availMemMb = Math.round(availMemKb / 1024) || Math.round(os.freemem() / 1024 / 1024);
-    // Standard Linux free -m formula: used = total - free - buffers - cached
     const usedMemMb = Math.max(0, totalMemMb - freeMemMb - buffersCachedMb);
 
-    // Storage info (UFS 2.2 storage)
     let storageTotalGb = 103;
     let storageFreeGb = 73;
     let storageUsedGb = 30;
@@ -102,7 +99,6 @@ app.get('/api/system/telemetry', (req, res) => {
       // Fallback
     }
 
-    // Thermal / ACC Status
     const accScriptExists = fs.existsSync('/data/adb/vr25/acc/accd.sh');
 
     res.json({
@@ -157,8 +153,361 @@ app.get('/api/system/telemetry', (req, res) => {
   }
 });
 
+// ==========================================================
+// 1.5. ESP32-S3 IoT Telemetry & Historical Storage Engine
+// ==========================================================
+// Tự động hết hạn vào 23:59:59 ngày 03/10/2026 (sau 14 ngày)
+const DEMO_EXPIRE_AT = new Date('2026-10-03T23:59:59+07:00').getTime();
+const isDemoExpired = () => Date.now() > DEMO_EXPIRE_AT;
+
+// Cấu trúc dữ liệu lưu trữ
+let latestTelemetry = null;
+let lastReceivedTime = 0;
+const REALTIME_LIMIT = 300; // 300 điểm = 5 phút gần nhất ở tần suất 1Hz
+let realtimeHistory = [];
+
+const LONG_TERM_LIMIT = 1440; // 1440 điểm = 24 giờ với bước downsample 1 phút/điểm
+let longTermHistory = [];
+
+const sseClients = new Set();
+let packetStats = {
+  totalReceived: 0,
+  lastSeq: null,
+  lostPackets: 0
+};
+
+// Bộ tích lũy mẫu (Downsampling Accumulator) cho chu kỳ 60 giây
+let sampleBucket = [];
+let lastDownsampleTime = Date.now();
+
+// Nạp dữ liệu lịch sử từ file disk (nếu có)
+try {
+  if (fs.existsSync(STORE_FILE)) {
+    const raw = fs.readFileSync(STORE_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.longTermHistory)) {
+      longTermHistory = parsed.longTermHistory;
+    }
+    if (parsed && parsed.packetStats) {
+      packetStats = parsed.packetStats;
+    }
+    if (parsed && parsed.latestTelemetry) {
+      latestTelemetry = parsed.latestTelemetry;
+      lastReceivedTime = latestTelemetry.received_at || 0;
+    }
+  }
+} catch (err) {
+  // Bỏ qua lỗi nạp file
+}
+
+// Lưu dữ liệu lịch sử xuống disk an toàn
+function persistStoreToDisk() {
+  try {
+    const data = JSON.stringify({
+      latestTelemetry,
+      packetStats,
+      longTermHistory: longTermHistory.slice(-LONG_TERM_LIMIT)
+    });
+    fs.writeFile(STORE_FILE, data, 'utf8', () => {});
+  } catch (e) {
+    // Không block server
+  }
+}
+
+// 1.5.1. Endpoint tiếp nhận dữ liệu từ ESP32-S3 (Hỗ trợ cả Single 1Hz và Batch Ingestion)
+app.post('/api/sensor', express.json({ limit: '2mb' }), (req, res) => {
+  if (isDemoExpired()) {
+    return res.status(410).json({ error: 'Demo period has expired' });
+  }
+
+  const data = req.body;
+  if (!data || typeof data !== 'object') {
+    return res.status(400).json({ error: 'Invalid payload' });
+  }
+
+  const deviceId = data.device_id || req.headers['x-device-id'] || 'ESP32S3_DEVICE';
+  const isBatch = data.batch === true || Array.isArray(data.records);
+
+  let rawRecords = [];
+  if (isBatch) {
+    rawRecords = Array.isArray(data.records) ? data.records : [];
+  } else {
+    // Gói tin đơn lẻ
+    if (!data.metrics) {
+      return res.status(400).json({ error: 'Missing metrics object' });
+    }
+    rawRecords = [{
+      timestamp: data.timestamp,
+      seq: data.seq,
+      metrics: data.metrics,
+      diagnostics: data.diagnostics || {},
+      status: data.status || {}
+    }];
+  }
+
+  const now = Date.now();
+  lastReceivedTime = now;
+  const processedRecords = [];
+
+  for (const r of rawRecords) {
+    // Luôn ưu tiên timestamp gốc của thiết bị (NTP UTC)
+    const recTimestamp = r.timestamp || Math.floor(now / 1000);
+    const recSeq = typeof r.seq === 'number' ? r.seq : null;
+
+    if (recSeq !== null) {
+      if (packetStats.lastSeq !== null && recSeq > packetStats.lastSeq + 1) {
+        packetStats.lostPackets += (recSeq - packetStats.lastSeq - 1);
+      }
+      if (packetStats.lastSeq === null || recSeq > packetStats.lastSeq) {
+        packetStats.lastSeq = recSeq;
+      }
+    }
+    packetStats.totalReceived++;
+
+    const norm = {
+      device_id: deviceId,
+      timestamp: recTimestamp,
+      seq: recSeq,
+      metrics: {
+        temperature: Number(r.metrics?.temperature) || 0,
+        humidity: Number(r.metrics?.humidity) || 0,
+        dew_point: Number(r.metrics?.dew_point) || 0,
+        vpd: Number(r.metrics?.vpd) || 0
+      },
+      diagnostics: {
+        chip_temp: Number(r.diagnostics?.chip_temp) || 0,
+        cpu_load: Number(r.diagnostics?.cpu_load) || 0,
+        cpu0: Number(r.diagnostics?.cpu0) || 0,
+        cpu1: Number(r.diagnostics?.cpu1) || 0,
+        free_heap: Number(r.diagnostics?.free_heap) || 0,
+        uptime_sec: Number(r.diagnostics?.uptime_sec) || 0,
+        wifi_rssi: Number(r.diagnostics?.wifi_rssi) || 0
+      },
+      status: r.status || {},
+      received_at: now
+    };
+
+    processedRecords.push(norm);
+    realtimeHistory.push(norm);
+    sampleBucket.push(norm);
+  }
+
+  if (realtimeHistory.length > REALTIME_LIMIT) {
+    realtimeHistory = realtimeHistory.slice(-REALTIME_LIMIT);
+  }
+
+  // Cập nhật latestTelemetry với bản ghi mới nhất theo timestamp
+  if (processedRecords.length > 0) {
+    const newest = processedRecords[processedRecords.length - 1];
+    if (!latestTelemetry || newest.timestamp >= latestTelemetry.timestamp) {
+      latestTelemetry = newest;
+    }
+  }
+
+  // Gom mẫu downsampling định kỳ 60s
+  if (now - lastDownsampleTime >= 60000 && sampleBucket.length > 0) {
+    const count = sampleBucket.length;
+    const avg = (fn) => Number((sampleBucket.reduce((acc, r) => acc + fn(r), 0) / count).toFixed(2));
+
+    const downsampledPoint = {
+      timestamp: Math.floor(now / 1000),
+      metrics: {
+        temperature: avg(r => r.metrics.temperature),
+        humidity: avg(r => r.metrics.humidity),
+        dew_point: avg(r => r.metrics.dew_point),
+        vpd: avg(r => r.metrics.vpd)
+      },
+      diagnostics: {
+        chip_temp: avg(r => r.diagnostics.chip_temp),
+        cpu_load: avg(r => r.diagnostics.cpu_load),
+        free_heap: Math.round(avg(r => r.diagnostics.free_heap)),
+        wifi_rssi: Math.round(avg(r => r.diagnostics.wifi_rssi))
+      }
+    };
+
+    longTermHistory.push(downsampledPoint);
+    if (longTermHistory.length > LONG_TERM_LIMIT) {
+      longTermHistory.shift();
+    }
+
+    sampleBucket = [];
+    lastDownsampleTime = now;
+    persistStoreToDisk();
+  }
+
+  // Nếu nhận Batch thì lưu ngay xuống đĩa để bảo toàn dữ liệu offline
+  if (isBatch && processedRecords.length > 0) {
+    persistStoreToDisk();
+  }
+
+  // Broadcast tới mọi SSE clients
+  if (sseClients.size > 0 && processedRecords.length > 0) {
+    const total = packetStats.totalReceived + packetStats.lostPackets;
+    const lossRate = total > 0 ? ((packetStats.lostPackets / total) * 100).toFixed(2) : '0.00';
+    
+    let ssePayload;
+    if (isBatch) {
+      ssePayload = `data: ${JSON.stringify({
+        type: 'batch_ingestion',
+        count: processedRecords.length,
+        records: processedRecords,
+        latest: latestTelemetry,
+        stats: {
+          totalReceived: packetStats.totalReceived,
+          lostPackets: packetStats.lostPackets,
+          lossRate: lossRate
+        }
+      })}\n\n`;
+    } else {
+      ssePayload = `data: ${JSON.stringify({
+        type: 'telemetry',
+        data: processedRecords[0],
+        stats: {
+          totalReceived: packetStats.totalReceived,
+          lostPackets: packetStats.lostPackets,
+          lossRate: lossRate
+        }
+      })}\n\n`;
+    }
+
+    for (const client of sseClients) {
+      try {
+        client.write(ssePayload);
+      } catch (e) {
+        sseClients.delete(client);
+      }
+    }
+  }
+
+  // Trả về HTTP 200 tức thì theo đúng đặc tả BACKEND_API_SPEC.md
+  if (isBatch) {
+    return res.status(200).json({
+      status: 'ok',
+      batch: true,
+      received_count: processedRecords.length,
+      server_time: Math.floor(now / 1000)
+    });
+  } else {
+    return res.status(200).json({
+      status: 'ok',
+      batch: false,
+      ack_seq: processedRecords[0].seq,
+      server_time: Math.floor(now / 1000)
+    });
+  }
+});
+
+// 1.5.2. Endpoint lấy dữ liệu khởi tạo
+app.get('/api/sensor/latest', (req, res) => {
+  if (isDemoExpired()) {
+    return res.status(410).json({ error: 'Demo period has expired', expired: true });
+  }
+
+  const now = Date.now();
+  const isOnline = Boolean(latestTelemetry && (now - lastReceivedTime < 4500));
+  const total = packetStats.totalReceived + packetStats.lostPackets;
+  const lossRate = total > 0 ? ((packetStats.lostPackets / total) * 100).toFixed(2) : '0.00';
+
+  res.json({
+    is_online: isOnline,
+    last_seen_sec_ago: latestTelemetry ? Math.round((now - lastReceivedTime) / 1000) : null,
+    latest: latestTelemetry,
+    realtime_history: realtimeHistory,
+    long_term_history: longTermHistory,
+    stats: {
+      total_received: packetStats.totalReceived,
+      lost_packets: packetStats.lostPackets,
+      packet_loss_rate: lossRate
+    },
+    expires_at: new Date(DEMO_EXPIRE_AT).toISOString(),
+    expired: false
+  });
+});
+
+// 1.5.3. Endpoint truy vấn lịch sử theo dải thời gian (?range=5m|1h|24h)
+app.get('/api/sensor/history', (req, res) => {
+  const range = req.query.range || '5m';
+  if (range === '5m') {
+    return res.json({ range: '5m', points: realtimeHistory });
+  }
+  if (range === '1h') {
+    const points = longTermHistory.slice(-60);
+    return res.json({ range: '1h', points });
+  }
+  return res.json({ range: '24h', points: longTermHistory });
+});
+
+// 1.5.4. Endpoint SSE truyền phát dữ liệu thời gian thực
+app.get('/api/sensor/events', (req, res) => {
+  if (isDemoExpired()) {
+    return res.status(410).json({ error: 'Demo period has expired' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (res.flushHeaders) res.flushHeaders();
+
+  if (latestTelemetry) {
+    const total = packetStats.totalReceived + packetStats.lostPackets;
+    const lossRate = total > 0 ? ((packetStats.lostPackets / total) * 100).toFixed(2) : '0.00';
+    const initPayload = JSON.stringify({
+      type: 'initial',
+      data: latestTelemetry,
+      realtime_history: realtimeHistory,
+      long_term_history: longTermHistory,
+      stats: {
+        totalReceived: packetStats.totalReceived,
+        lostPackets: packetStats.lostPackets,
+        lossRate: lossRate
+      }
+    });
+    res.write(`data: ${initPayload}\n\n`);
+  }
+
+  sseClients.add(res);
+
+  const heartbeatTimer = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch (e) {
+      clearInterval(heartbeatTimer);
+    }
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeatTimer);
+    sseClients.delete(res);
+  });
+});
+
+// 1.5.5. Phục vụ trang Web IoT Dashboard công khai tại /esp (Không cần đăng nhập)
+app.use('/esp', express.static(ESP_DASHBOARD_DIR, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+    }
+  }
+}));
+
+app.get(['/esp', '/esp/*'], (req, res) => {
+  if (isDemoExpired()) {
+    return res.status(410).send(`
+      <!DOCTYPE html>
+      <html lang="vi">
+      <head><meta charset="utf-8"><title>Demo Hết Hạn</title><style>body{background:#0a0f1d;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}</style></head>
+      <body><div><h1>Bản Demo IoT Đã Kết Thúc</h1><p>Thời hạn thử nghiệm 2 tuần đã hoàn tất.</p></div></body>
+      </html>
+    `);
+  }
+  res.sendFile(path.join(ESP_DASHBOARD_DIR, 'index.html'));
+});
+
 // 2. Reverse Proxy to File Browser Go Backend (Port 8080)
-const proxyPaths = ['/api/login', '/api/resources', '/api/raw', '/api/shares', '/api/share', '/api/users', '/api/public'];
+const proxyPaths = ['/api/login', '/api/resources', '/api/raw', '/api/shares', '/api/share', '/api/users', '/api/settings', '/api/public'];
 
 app.use((req, res, next) => {
   const isProxyTarget = proxyPaths.some(prefix => req.path.startsWith(prefix));
@@ -166,7 +515,6 @@ app.use((req, res, next) => {
     return next();
   }
 
-  // Create streaming proxy request
   const options = {
     hostname: '127.0.0.1',
     port: ENGINE_PORT,
@@ -198,8 +546,19 @@ app.use((req, res, next) => {
 
 // 3. Serve Frontend Web App (SPA)
 if (fs.existsSync(CLIENT_DIST)) {
-  app.use(express.static(CLIENT_DIST));
+  app.use(express.static(CLIENT_DIST, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }
+  }));
   app.get('*', (req, res) => {
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     res.sendFile(path.join(CLIENT_DIST, 'index.html'));
   });
 } else {
